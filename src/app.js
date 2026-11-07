@@ -1,79 +1,91 @@
-import {parseAmount,money,dayKey,totals} from './domain.js';
-const $=id=>document.getElementById(id);
-let store,user=null,stopWatching=()=>{},entries=[],budget=0,ready=false,busy=false,mode='cart',undo=null;
-let today=dayKey(), generation=0, initDay=false;
-const trash='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5"/></svg>';
-function status(text='',error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
-function showError(error){
-  const messages={'permission-denied':'Your budget could not be opened. Database access needs to be enabled for this app.','auth/popup-closed-by-user':'Sign-in was closed. You can try again.','auth/popup-blocked':'Allow pop-ups for this site, then try Google sign-in again.','auth/unauthorized-domain':'Google sign-in is not enabled for this website yet.','unavailable':'Could not reach your budget. Check your connection and try again.'};
-  status(messages[error.code]||error.message||'Something went wrong. Please try again.',true);
+
+'use strict';
+const $=id=>document.getElementById(id),money=n=>(n<0?'−':'')+'¥'+Math.abs(n).toLocaleString('ja-JP',{maximumFractionDigits:0}),sum=xs=>xs.reduce((a,x)=>a+x.yen,0),escapeHTML=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let state={budget:1000,mode:'cart',type:'quick',nextId:1,nextItem:1,nextPurchase:1,cart:[],purchases:[]};
+let entry='0',tokens=[],fresh=false,solved=false,calcError=false,pendingDelete=null,expanded=new Set();
+let STORAGE_KEY='daily-budget-v1';
+let cloudSink=null;
+let currentDate=localDay(),defaultBudget=1000,history={},ui={cartLeft:0,middleTop:0},storageReady=false,rotating=false,midnightTimer;
+function localDay(date=new Date()){return [date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-')}
+function storageProblem(message){$('storagewarning').textContent=message;$('storagewarning').hidden=false}
+function validState(value){return value&&Number.isSafeInteger(value.budget)&&value.budget>=0&&['cart','spent'].includes(value.mode)&&['quick','full'].includes(value.type)&&['nextId','nextItem','nextPurchase'].every(k=>Number.isSafeInteger(value[k])&&value[k]>0)&&Array.isArray(value.cart)&&value.cart.every(x=>Number.isSafeInteger(x.id)&&typeof x.name==='string'&&Number.isSafeInteger(x.yen)&&x.yen>0&&typeof x.selected==='boolean')&&Array.isArray(value.purchases)&&value.purchases.every(p=>Number.isSafeInteger(p.id)&&typeof p.name==='string'&&Array.isArray(p.items)&&p.items.every(x=>typeof x.name==='string'&&Number.isSafeInteger(x.yen)&&x.yen>0))}
+function snapshot(){return JSON.parse(JSON.stringify({version:1,currentDate,defaultBudget,state,history,calculator:{entry,tokens,fresh,solved,calcError},ui:{...ui,expanded:[...expanded]}}))}
+function save(){if(!storageReady)return;try{const data=snapshot();localStorage.setItem(STORAGE_KEY,JSON.stringify(data));if(cloudSink)cloudSink(data);$('storagewarning').hidden=true}catch(error){storageProblem('Changes could not be saved. Browser storage may be unavailable or full.')}}
+function load(){try{const raw=localStorage.getItem(STORAGE_KEY);if(!raw)return;const data=JSON.parse(raw);if(data.version!==1||!validState(data.state)||!/^\d{4}-\d{2}-\d{2}$/.test(data.currentDate)||!Number.isSafeInteger(data.defaultBudget)||data.defaultBudget<0||!data.history||typeof data.history!=='object'||Array.isArray(data.history)||Object.entries(data.history).some(([day,record])=>!/^\d{4}-\d{2}-\d{2}$/.test(day)||!validState(record)))throw new Error('Invalid saved data');state=data.state;currentDate=data.currentDate;defaultBudget=data.defaultBudget;history=data.history;
+ const c=data.calculator;if(c&&typeof c.entry==='string'&&Number.isFinite(Number(c.entry))&&Array.isArray(c.tokens)&&c.tokens.length%2===0&&c.tokens.every((v,i)=>i%2===0?typeof v==='string'&&Number.isFinite(Number(v)):['+','−','×','÷'].includes(v))){entry=c.entry;tokens=c.tokens;fresh=!!c.fresh;solved=!!c.solved;calcError=!!c.calcError}
+ const v=data.ui;if(v){ui.cartLeft=Number.isFinite(v.cartLeft)?Math.max(0,v.cartLeft):0;ui.middleTop=Number.isFinite(v.middleTop)?Math.max(0,v.middleTop):0;expanded=new Set(Array.isArray(v.expanded)?v.expanded.filter(id=>state.purchases.some(p=>p.id===id)):[])}
+ }catch(error){storageReady=false;storageProblem('Saved data could not be loaded. Reload before making changes to avoid replacing it.');return false}return true}
+function ensureDay(){const today=localDay();if(rotating||today===currentDate)return false;rotating=true;
+ document.querySelectorAll('input.rename').forEach(input=>input.blur());
+ history[currentDate]=JSON.parse(JSON.stringify(state));
+ if(history[today]){state=JSON.parse(JSON.stringify(history[today]));delete history[today]}else{state={...state,budget:defaultBudget,cart:state.cart.map(x=>({...x,selected:false})),purchases:[],nextPurchase:1}}
+ currentDate=today;clearCalc();expanded.clear();ui={cartLeft:0,middleTop:0};pendingDelete=null;clearTimeout(purchaseClickTimer);purchaseClickTimer=null;
+ ['settingsdialog','deletedialog','historydialog'].forEach(id=>{if($(id).open)$(id).close()});notify('A new day has started.');rotating=false;render();restoreScroll();return true}
+function restoreScroll(){$('cart').scrollLeft=ui.cartLeft;$('middle').scrollTop=ui.middleTop}
+function scheduleMidnight(){clearTimeout(midnightTimer);const now=new Date();const next=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1);midnightTimer=setTimeout(()=>{ensureDay();scheduleMidnight()},Math.max(1,next.getTime()-now.getTime()+50))}
+function checkDay(){ensureDay();scheduleMidnight()}
+function showHistory(){const dates=Object.keys(history).sort().reverse();$('historydate').innerHTML=dates.map(day=>`<option value="${day}">${new Date(day+'T12:00:00').toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}</option>`).join('');$('historydate').hidden=!dates.length;$('historydatelabel').hidden=!dates.length;if(dates.length)$('historydate').value=dates[0];renderHistory()}
+function renderHistory(){const record=history[$('historydate').value];if(!record){$('historycontent').innerHTML='<div class="historypurchases"><div class="empty">No previous days yet.</div></div>';return}const spent=record.purchases.reduce((s,p)=>s+sum(p.items),0);$('historycontent').innerHTML=`<div class="historysummary"><span>Daily budget</span><strong>${money(record.budget)}</strong><span>Spent</span><strong>${money(spent)}</strong><span>Remaining</span><strong>${money(record.budget-spent)}</strong></div><div class="historypurchases">${record.purchases.length?record.purchases.slice().reverse().map(p=>`<details><summary>${escapeHTML(p.name)}<strong>${money(sum(p.items))}</strong></summary><div class="purchaseitems">${p.items.map(x=>`<div class="detailrow"><span>${escapeHTML(x.name)}</span><span>${money(x.yen)}</span></div>`).join('')}</div></details>`).join(''):'<div class="empty">No purchases on this day.</div>'}</div>`}
+
+function calculate(xs){if(!xs.length||xs.length%2===0)return null;let values=[],ops=[];for(let i=0;i<xs.length;i++){if(i%2===0){if(!Number.isFinite(Number(xs[i])))return null;values.push(Number(xs[i]))}else{if(!['+','−','×','÷'].includes(xs[i]))return null;ops.push(xs[i])}}let v=[values[0]],rest=[];for(let i=0;i<ops.length;i++){let op=ops[i],n=values[i+1];if(op==='×'||op==='÷'){if(op==='÷'&&n===0)return null;v[v.length-1]=op==='×'?v[v.length-1]*n:v[v.length-1]/n}else{rest.push(op);v.push(n)}}let n=v[0];for(let i=0;i<rest.length;i++)n=rest[i]==='+'?n+v[i+1]:n-v[i+1];return Number.isFinite(n)&&Math.abs(n)<1e9?Math.round(n):null}
+function amount(){return calcError||(fresh&&tokens.length)?null:calculate([...tokens,entry])}
+function clearCalc(){entry='0';tokens=[];fresh=false;solved=false;calcError=false}
+function key(k){if(k==='add'){add();return}if(k==='AC'){clearCalc();renderCalc();return}if(calcError)clearCalc();if(/^\d$/.test(k)){if(solved)clearCalc();if(fresh){entry='0';fresh=false}if(entry.replace(/[-.]/g,'').length>=12)return;entry=entry==='0'?k:entry==='-0'?'-'+k:entry+k}else if(k==='back'){if(fresh&&tokens.length){tokens.pop();entry=tokens.pop()||'0';fresh=false}else{entry=entry.length<=1||(entry.length===2&&entry[0]==='-')?'0':entry.slice(0,-1)}solved=false}else if(k==='sign'){if(fresh){entry='0';fresh=false}entry=entry.startsWith('-')?entry.slice(1):entry==='0'?'0':'-'+entry;solved=false}else if(k==='%'){if(fresh)return;entry=String(Number((Number(entry)/100).toFixed(8)));solved=false}else if(['+','−','×','÷'].includes(k)){if(state.type==='quick'&&k!=='×')return;if(solved){tokens=[];solved=false}if(fresh&&tokens.length)tokens[tokens.length-1]=k;else{tokens.push(entry,k);fresh=true}}else if(k==='='){if(fresh)return;let n=amount();if(n===null)calcError=true;else{entry=String(n);tokens=[];fresh=false;solved=true}}renderCalc()}
+function add(){const yen=amount();if(yen===null||yen<=0)return;if(state.mode==='cart'){state.cart.push({id:state.nextId++,name:'Item '+state.nextItem++,yen,selected:true});notify('Added '+money(yen)+' to cart')}else{state.purchases.push({id:state.nextId++,name:'Purchase '+state.nextPurchase++,items:[{name:'Item '+state.nextItem++,yen}]});notify('Added '+money(yen)+' to Spent Today')}clearCalc();render();if(state.mode==='cart')$('cart').scrollTo({left:$('cart').scrollWidth,behavior:'smooth'})}
+function notify(text){$('feedback').textContent=text}
+function render(){const chosen=state.cart.filter(x=>x.selected),selected=sum(chosen),spent=state.purchases.reduce((s,p)=>s+sum(p.items),0),projected=state.budget-spent-selected;$('projected').textContent=money(projected);$('projected').style.color=projected<0?'#ff7979':'var(--orange)';$('warning').hidden=projected>=0;$('warning').textContent='Over budget by '+money(-projected);$('listtitle').textContent=state.mode==='cart'?'Considering ('+state.cart.length+')':'Spent Today ('+state.purchases.length+')';$('listtotal').textContent=state.mode==='cart'?money(selected)+' selected':money(spent);$('cart').hidden=state.mode!=='cart';$('purchases').hidden=state.mode!=='spent';$('checkout').hidden=state.mode!=='cart';$('checkout').disabled=!chosen.length;$('checkout').textContent='Checkout '+chosen.length+' selected · '+money(selected);
+const oldScroll=$('cart').scrollLeft;$('cart').innerHTML=state.cart.length?state.cart.map(x=>`<article class="item ${x.selected?'':'off'}"><div class="itemtop"><input type="checkbox" data-select="${x.id}" aria-label="Select ${escapeHTML(x.name)}" ${x.selected?'checked':''}><button class="name" data-name="${x.id}" title="Double-click to rename">${escapeHTML(x.name)}</button><button class="remove" data-remove="${x.id}" aria-label="Remove ${escapeHTML(x.name)}">×</button></div><div class="price">${money(x.yen)}</div></article>`).join(''):'<div class="empty-cart"><img src="./assets/cart-empty.gif" width="360" height="202" alt="Your cart is empty"></div>';$('cart').scrollLeft=oldScroll;
+$('purchases').innerHTML=state.purchases.length?state.purchases.slice().reverse().map(p=>`<article class="purchase"><div class="purchasebar"><button class="expand" data-expand="${p.id}" aria-label="Toggle ${escapeHTML(p.name)}" aria-expanded="${expanded.has(p.id)}" aria-controls="purchase-${p.id}"><span class="chevron">${expanded.has(p.id)?'⌄':'›'}</span></button><div class="purchase-name"><button class="name" data-purchase-name="${p.id}" title="Double-click to rename">${escapeHTML(p.name)}</button><small>${p.items.length} ${p.items.length===1?'item':'items'}</small></div><button class="expand purchase-total" data-expand="${p.id}" aria-label="Toggle purchase items" aria-expanded="${expanded.has(p.id)}" aria-controls="purchase-${p.id}">${money(sum(p.items))}</button><button class="remove" data-delete="${p.id}" aria-label="Delete ${escapeHTML(p.name)}">×</button></div><div class="purchaseitems" id="purchase-${p.id}" ${expanded.has(p.id)?'':'hidden'}>${p.items.map((x,i)=>`<div class="detailrow"><button class="name" data-purchase="${p.id}" data-purchase-item="${i}" title="Double-click to rename">${escapeHTML(x.name)}</button><span>${money(x.yen)}</span></div>`).join('')}</div></article>`).join(''):'<div class="empty" style="margin:0">No purchases today</div>';
+const isCart=state.mode==='cart';$('destinationbtn').innerHTML=isCart?'<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 4h2l2.4 11h11l2-8H6"/><circle cx="9" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>':'<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3l2 1 2-1 2 1 2-1 2 1 2-1v18l-2-1-2 1-2-1-2 1-2-1-2 1V3Z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>';$('destinationbtn').setAttribute('aria-label','Entry destination: '+(isCart?'Add to cart. Switch to Spent Today':'Spent Today. Switch to Add to cart'));$('destinationbtn').title=isCart?'Add to cart · Switch to Spent Today':'Spent Today · Switch to Add to cart';document.querySelectorAll('[data-type]').forEach(b=>{b.classList.toggle('active',b.dataset.type===state.type);b.setAttribute('aria-pressed',String(b.dataset.type===state.type))});renderCalc()}
+function renderCalc(){let n=amount();$('expression').textContent=tokens.length?tokens.join(' ')+' '+(fresh?'':entry):solved?'=':'';$('number').textContent=calcError?'Error':tokens.length&&!fresh&&n!==null?n.toLocaleString('ja-JP',{maximumFractionDigits:0}):Number(entry).toLocaleString('ja-JP',{maximumFractionDigits:0});$('number').style.fontSize=$('number').textContent.length>12?'25px':'39px';$('quickpad').hidden=state.type!=='quick';$('fullpad').hidden=state.type!=='full';$('fullsave').hidden=state.type!=='full';$('fullsave').disabled=n===null||n<=0;$('fullsave').textContent=(state.mode==='cart'?'+ Add to cart':'+ Add to Spent Today')+(n!==null&&n>0?' · '+money(n):'');const addkey=$('quickpad').querySelector('[data-key="add"]');addkey.disabled=n===null||n<=0;addkey.setAttribute('aria-label',state.mode==='cart'?'Add amount to cart':'Add amount to Spent Today');save()}
+function makeKeys(id,keys){$(id).innerHTML=keys.map(k=>`<button class="key ${['AC','back','%','sign'].includes(k)?'util':['×','÷','−','+','='].includes(k)?'op':k==='add'?'add':''}" data-key="${k}" ${k==='back'?'aria-label="Backspace"':k==='sign'?'aria-label="Change sign"':''}>${({back:'⌫',sign:'+/−',add:'+'})[k]||k}</button>`).join('')}
+makeKeys('quickpad',['AC','back','%','×','7','8','9','4','5','6','1','2','3','sign','0','add']);makeKeys('fullpad',['AC','back','%','÷','7','8','9','×','4','5','6','−','1','2','3','+','sign','0','=']);
+document.querySelectorAll('[data-key]').forEach(b=>b.onclick=()=>key(b.dataset.key));$('fullsave').onclick=add;
+$('checkout').onclick=()=>{const chosen=state.cart.filter(x=>x.selected);if(!chosen.length)return;state.purchases.push({id:state.nextId++,name:'Purchase '+state.nextPurchase++,items:chosen.map(x=>({name:x.name,yen:x.yen}))});state.cart=state.cart.filter(x=>!x.selected);notify(chosen.length+' items checked out');render()};
+$('cart').onchange=ev=>{let x=state.cart.find(x=>x.id===Number(ev.target.dataset.select));if(x){x.selected=ev.target.checked;render()}};$('cart').onclick=ev=>{const b=ev.target.closest('[data-remove]');if(b){state.cart=state.cart.filter(x=>x.id!==Number(b.dataset.remove));render()}};
+function rename(button){if(!button||!button.isConnected)return;const item=state.cart.find(x=>x.id===Number(button.dataset.name));if(!item)return;const input=document.createElement('input');input.className='rename';input.value=item.name;input.maxLength=80;input.setAttribute('aria-label','Edit item name');button.replaceWith(input);input.focus();input.select();let done=false;function finish(save){if(done)return;done=true;if(save)item.name=input.value.trim()||item.name;render()}input.onblur=()=>finish(true);input.onkeydown=ev=>{if(ev.key==='Enter'){ev.preventDefault();finish(true)}else if(ev.key==='Escape'){ev.preventDefault();finish(false)}}}
+$('cart').ondblclick=ev=>rename(ev.target.closest('[data-name]'));$('cart').onkeydown=ev=>{if(ev.key==='Enter'&&ev.target.matches('[data-name]')){ev.preventDefault();rename(ev.target)}};
+let lastTap={id:null,time:0};$('cart').addEventListener('pointerup',ev=>{if(ev.pointerType==='mouse')return;const b=ev.target.closest('[data-name]');if(!b)return;let now=Date.now();if(lastTap.id===b.dataset.name&&now-lastTap.time<400){ev.preventDefault();rename(b);lastTap={id:null,time:0}}else lastTap={id:b.dataset.name,time:now}});
+let purchaseClickTimer=null,purchaseLastTap={button:null,time:0};
+function togglePurchase(id){expanded.has(id)?expanded.delete(id):expanded.add(id);render();$('purchases').querySelector(`[data-expand="${id}"]`)?.focus()}
+function renamePurchase(button){
+ clearTimeout(purchaseClickTimer);purchaseClickTimer=null;
+ if(!button||!button.isConnected)return;
+ const isPurchase=button.dataset.purchaseName!==undefined;
+ const purchase=state.purchases.find(p=>p.id===Number(isPurchase?button.dataset.purchaseName:button.dataset.purchase));
+ const target=isPurchase?purchase:purchase?.items[Number(button.dataset.purchaseItem)];
+ if(!target)return;
+ const input=document.createElement('input');input.className='rename';input.value=target.name;input.maxLength=80;input.setAttribute('aria-label',isPurchase?'Edit purchase name':'Edit purchased item name');button.replaceWith(input);input.focus();input.select();let done=false;
+ function finish(save){if(done)return;done=true;if(save)target.name=input.value.trim()||target.name;render()}
+ input.onblur=()=>finish(true);input.onkeydown=ev=>{if(ev.key==='Enter'){ev.preventDefault();finish(true)}else if(ev.key==='Escape'){ev.preventDefault();finish(false)}};
 }
-function notify(text,changes){undo=changes||null;$('toast-text').textContent=text;$('undo').hidden=!undo;$('toast').hidden=false;}
-function resetToast(){undo=null;$('toast').hidden=true;}
-function render(){
-  const active=!!user&&ready;const sum=totals(budget,entries,today);
-  $('projected').textContent=active?money(sum.projected):'—';$('projected').classList.toggle('negative',active&&sum.projected<0);
-  $('actual').textContent=active?money(sum.actual):'—';$('selected-total').textContent=active?'−'+money(sum.selected):'—';$('budget-value').textContent=active?money(budget):'—';
-  $('spent-total').textContent=active?money(sum.spent):'—';
-  const cart=entries.filter(x=>x.kind==='cart').sort((a,b)=>a.createdAt-b.createdAt||a.id.localeCompare(b.id));
-  const purchases=entries.filter(x=>x.kind==='purchase'&&x.purchaseDate===today).sort((a,b)=>b.purchasedAt-a.purchasedAt);
-  $('cart-count').textContent=cart.length;$('purchase-count').textContent=purchases.length;
-  $('selection-count').textContent=`${cart.filter(x=>x.selected).length} selected`;
-  $('checkout-total').textContent=money(sum.selected)+' ↗';
-  ['budget-button','item-name','item-amount','add-button','cart-tab','purchase-tab'].forEach(id=>$(id).disabled=!active||busy);
-  $('checkout').disabled=!active||busy||!cart.some(x=>x.selected);
-  $('sign-in-panel').hidden=!!user;$('account').hidden=!user;$('account-name').textContent=user?.email||'';$('sign-out').disabled=busy;
-  $('cart').replaceChildren(...cart.map((item,i)=>itemRow(item,i,false)));
-  $('purchases').replaceChildren(...purchases.map((item,i)=>itemRow(item,i,true)));
-  if(!cart.length) empty($('cart'),active?'Your consideration cart is empty.':'Your consideration cart will appear here.');
-  if(!purchases.length) empty($('purchases'),'No purchases recorded today.');
-}
-function empty(container,text){const p=document.createElement('p');p.className='empty';p.textContent=text;container.append(p);}
-function itemRow(item,index,purchased){
-  const row=document.createElement('div');row.className='item'+(!purchased&&!item.selected?' unselected':'');
-  const label=item.name||`Item ${index+1}`;
-  if(!purchased){const check=document.createElement('input');check.type='checkbox';check.checked=item.selected;check.disabled=busy||!ready;check.setAttribute('aria-label',`Select ${label}, ${money(item.amount)}`);check.addEventListener('change',()=>act(()=>store.selectEntry(user.uid,item,check.checked)));row.append(check);}
-  const name=document.createElement('div');name.className='item-name';name.textContent=label;
-  if(purchased){const time=document.createElement('time');time.dateTime=new Date(item.purchasedAt).toISOString();time.textContent=new Intl.DateTimeFormat(undefined,{hour:'numeric',minute:'2-digit'}).format(item.purchasedAt);name.append(time);}
-  const amount=document.createElement('span');amount.className='item-price';amount.textContent=money(item.amount);
-  const remove=document.createElement('button');remove.className='icon-button';remove.setAttribute('aria-label',`Remove ${label}`);remove.innerHTML=trash;remove.disabled=busy||!ready;
-  remove.addEventListener('click',()=>act(async()=>{const changes=await store.removeEntry(user.uid,item);notify(purchased?'Purchase removed':'Item removed',changes);}));
-  row.append(name,amount,remove);return row;
-}
-async function act(action){if(!user||!ready||busy)return;busy=true;const token=generation;status();render();try{await action();}catch(error){if(token===generation)showError(error);}finally{if(token===generation){busy=false;render();}}}
-function setMode(next){mode=next;$('cart-tab').setAttribute('aria-selected',next==='cart');$('purchase-tab').setAttribute('aria-selected',next==='purchase');$('entry-form').setAttribute('aria-labelledby',next==='cart'?'cart-tab':'purchase-tab');$('add-button').setAttribute('aria-label',next==='cart'?'Add to cart':'Record purchase');}
-$('cart-tab').addEventListener('click',()=>setMode('cart'));
-$('purchase-tab').addEventListener('click',()=>setMode('purchase'));
-// Accessible keyboard navigation for the two entry tabs.
-for(const id of ['cart-tab','purchase-tab'])$(id).addEventListener('keydown',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();setMode(event.key==='Home'?'cart':event.key==='End'?'purchase':mode==='cart'?'purchase':'cart');$(mode==='cart'?'cart-tab':'purchase-tab').focus();}});
-$('entry-form').addEventListener('submit',event=>{event.preventDefault();let amount;try{amount=parseAmount($('item-amount').value);}catch(error){showError(error);$('item-amount').focus();return;}
-  const name=$('item-name').value.trim(),kind=mode,id=crypto.randomUUID();
-  act(async()=>{const changes=await store.addEntry(user.uid,today,{name,amount,kind},id);$('item-name').value='';$('item-amount').value='';notify(kind==='cart'?'Added to cart':'Purchase recorded',changes);}).then(()=>{if(user&&ready)$('item-amount').focus();});
-});
-$('checkout').addEventListener('click',()=>{const chosen=entries.filter(x=>x.kind==='cart'&&x.selected);act(async()=>{const changes=await store.checkout(user.uid,chosen,today);notify(`${chosen.length} ${chosen.length===1?'purchase':'purchases'} recorded`,changes);});});
-$('budget-button').addEventListener('click',()=>{$('budget-input').value=(budget/100).toFixed(2);$('budget-dialog').showModal();$('budget-input').select();});
-$('close-budget').addEventListener('click',()=>$('budget-dialog').close());
-$('budget-form').addEventListener('submit',event=>{event.preventDefault();let amount;try{amount=parseAmount($('budget-input').value,true);$('budget-input').setCustomValidity('');}catch(error){$('budget-input').setCustomValidity(error.message);$('budget-input').reportValidity();return;}
-  $('budget-dialog').close();act(async()=>{await store.saveBudget(user.uid,today,amount);notify('Daily budget saved');});
-});
-$('budget-input').addEventListener('input',()=>$('budget-input').setCustomValidity(''));
-$('undo').addEventListener('click',()=>{const changes=undo;if(changes)act(async()=>{await store.undoChanges(user.uid,changes);resetToast();});});
-$('dismiss-toast').addEventListener('click',resetToast);
-$('sign-in').addEventListener('click',async()=>{if(!store)return;$('sign-in').disabled=true;status('Opening Google sign-in…');try{await store.login();}catch(error){showError(error);}finally{$('sign-in').disabled=false;}});
-$('sign-out').addEventListener('click',async()=>{if(!busy)try{await store.logout();}catch(error){showError(error);}});
-function subscribe(){
-  stopWatching();const token=++generation;ready=false;busy=false;entries=[];budget=0;initDay=false;resetToast();render();
-  if(!user){status();return;}status('Loading your budget…');const uid=user.uid;
-  stopWatching=store.watch(uid,today,state=>{
-    if(token!==generation)return;
-    ready=state.ready;entries=state.entries;budget=state.daily?.amount??state.settings?.amount??0;
-    if(ready){status();if(!state.daily&&!initDay){initDay=true;store.ensureDay(uid,today).catch(error=>{if(token===generation){ready=false;showError(error);render();}});}}
-    render();
-  },error=>{if(token===generation){ready=false;showError(error);render();}});
-}
-function checkDay(){const day=dayKey();if(day!==today){today=day;subscribe();}}
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkDay();});setInterval(checkDay,15000);
-window.addEventListener('offline',()=>status('You are offline. Reconnect before saving a change.',true));
-window.addEventListener('online',()=>{if(user)subscribe();});
-render();
-try{store=await import('./store.js');store.observeAuth(next=>{user=next;subscribe();});}catch(error){status('Could not connect. Check your internet connection and reload.',true);$('sign-in').disabled=true;}
+$('purchases').onclick=ev=>{
+ if(ev.target.closest('input'))return;
+ const name=ev.target.closest('[data-purchase-name]'),expand=ev.target.closest('[data-expand]'),del=ev.target.closest('[data-delete]');
+ if(name){clearTimeout(purchaseClickTimer);if(ev.detail<2)purchaseClickTimer=setTimeout(()=>{purchaseClickTimer=null;togglePurchase(Number(name.dataset.purchaseName))},400);return}
+ if(expand){clearTimeout(purchaseClickTimer);togglePurchase(Number(expand.dataset.expand))}
+ if(del){clearTimeout(purchaseClickTimer);const p=state.purchases.find(p=>p.id===Number(del.dataset.delete));if(!p)return;pendingDelete=p.id;$('deletedescription').textContent='Delete '+p.name+' ('+money(sum(p.items))+') and all '+p.items.length+' '+(p.items.length===1?'item':'items')+' inside it?';$('deletedialog').showModal();$('canceldelete').focus()}
+};
+$('purchases').ondblclick=ev=>{const name=ev.target.closest('[data-purchase-name],[data-purchase-item]');if(name){ev.preventDefault();renamePurchase(name)}};
+$('purchases').onkeydown=ev=>{const name=ev.target.closest('[data-purchase-name],[data-purchase-item]');if(name&&ev.key==='Enter'){ev.preventDefault();renamePurchase(name)}};
+$('purchases').addEventListener('pointerup',ev=>{if(ev.pointerType==='mouse')return;const name=ev.target.closest('[data-purchase-name],[data-purchase-item]');if(!name)return;let now=Date.now();if(purchaseLastTap.button===name&&now-purchaseLastTap.time<400){ev.preventDefault();renamePurchase(name);purchaseLastTap={button:null,time:0}}else purchaseLastTap={button:name,time:now}});
+$('canceldelete').onclick=()=>{$('deletedialog').close();pendingDelete=null};$('deletedialog').addEventListener('cancel',()=>{pendingDelete=null});$('confirmdelete').onclick=()=>{if(pendingDelete!==null){state.purchases=state.purchases.filter(p=>p.id!==pendingDelete);expanded.delete(pendingDelete);pendingDelete=null;$('deletedialog').close();notify('Purchase deleted');render()}};
+$('settingsbtn').onclick=()=>{$('budgetinput').value=String(state.budget);$('budgeterror').textContent='';$('settingsdialog').showModal()};$('closesettings').onclick=()=>$('settingsdialog').close();$('destinationbtn').onclick=()=>{state.mode=state.mode==='cart'?'spent':'cart';notify('');render()};document.querySelectorAll('[data-type]').forEach(b=>b.onclick=()=>{state.type=b.dataset.type;clearCalc();render()});$('savebudget').onclick=()=>{let raw=$('budgetinput').value,n=Number(raw);if(raw.trim()&&Number.isSafeInteger(n)&&n>=0&&n<1e8){state.budget=n;defaultBudget=n;render();$('settingsdialog').close()}else $('budgeterror').textContent='Enter a daily budget in whole yen.'};
+document.addEventListener('keydown',ev=>{if(document.querySelector('dialog[open]')||ev.target.matches('input')||ev.target.closest('button'))return;const map={Enter:state.type==='quick'?'add':'=',Escape:'AC',Backspace:'back','*':'×','/':'÷','-':'−','+':state.type==='quick'?'add':'+'};let k=map[ev.key]||ev.key;if(/^\d$/.test(k)||['%','AC','back','×','÷','−','=','+','add'].includes(k)){ev.preventDefault();key(k)}});
+$('previousdays').onclick=()=>{$('settingsdialog').close();showHistory();$('historydialog').showModal()};$('historydate').onchange=renderHistory;$('closehistory').onclick=()=>$('historydialog').close();$('backtoday').onclick=()=>$('historydialog').close();
+$('cart').addEventListener('scroll',()=>{ui.cartLeft=$('cart').scrollLeft;save()},{passive:true});$('middle').addEventListener('scroll',()=>{ui.middleTop=$('middle').scrollTop;save()},{passive:true});
+document.addEventListener('pointerdown',ensureDay,true);document.addEventListener('keydown',ensureDay,true);document.addEventListener('click',ensureDay,true);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkDay();else save()});window.addEventListener('pageshow',checkDay);window.addEventListener('pagehide',save);window.addEventListener('focus',checkDay);
+const loaded=load();storageReady=loaded!==false;ensureDay();render();restoreScroll();scheduleMidnight();
+window.BudgetApp={
+ snapshot,
+ connect(sink){cloudSink=sink},
+ switchAccount(key,data){
+  cloudSink=null;clearTimeout(purchaseClickTimer);purchaseClickTimer=null;
+  document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close());
+  STORAGE_KEY=key;storageReady=false;clearCalc();expanded.clear();pendingDelete=null;ui={cartLeft:0,middleTop:0};history={};currentDate=localDay();defaultBudget=1000;
+  state={budget:1000,mode:'cart',type:'quick',nextId:1,nextItem:1,nextPurchase:1,cart:[],purchases:[]};
+  if(data)localStorage.setItem(key,JSON.stringify(data));
+  const ok=load();storageReady=ok!==false;ensureDay();notify('');render();restoreScroll();scheduleMidnight();
+  return snapshot();
+ }
+};

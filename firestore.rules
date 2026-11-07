@@ -4,42 +4,29 @@ service cloud.firestore {
     function owner(uid) {
       return request.auth != null && request.auth.uid == uid;
     }
-    function validBudget() {
-      return request.resource.data.keys().hasAll(['amount'])
-        && request.resource.data.keys().hasOnly(['amount'])
-        && request.resource.data.amount is int
-        && request.resource.data.amount >= 0
-        && request.resource.data.amount <= 1000000000;
-    }
-    function validEntry() {
-      let d = request.resource.data;
-      return d.keys().hasAll(['name', 'amount', 'kind', 'selected', 'purchaseDate', 'purchasedAt', 'createdAt', 'version'])
-        && d.keys().hasOnly(['name', 'amount', 'kind', 'selected', 'purchaseDate', 'purchasedAt', 'createdAt', 'version'])
-        && d.name is string && d.name.size() <= 100
-        && d.amount is int && d.amount > 0 && d.amount <= 1000000000
-        && d.kind in ['cart', 'purchase', 'removed']
-        && d.selected is bool
-        && d.purchaseDate is string
-        && d.purchasedAt is int && d.purchasedAt >= 0
-        && d.createdAt is int && d.createdAt >= 0
-        && d.version is int && d.version > 0
-        && (d.kind != 'purchase' || (d.purchaseDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && d.purchasedAt > 0 && d.selected == false))
-        && (d.kind != 'cart' || (d.purchaseDate == '' && d.purchasedAt == 0));
-    }
-    match /users/{uid}/settings/budget {
+    match /users/{uid}/budgetApps/daily {
       allow read: if owner(uid);
-      allow create, update: if owner(uid) && validBudget();
+      allow create: if owner(uid) && validProfile() && request.resource.data.revision == 1;
+      allow update: if owner(uid) && validProfile()
+        && request.resource.data.revision == resource.data.revision + 1;
+      function validProfile() {
+        let d = request.resource.data;
+        return d.keys().hasAll(['revision', 'payload', 'updatedAt'])
+          && d.keys().hasOnly(['revision', 'payload', 'updatedAt'])
+          && d.revision is int && d.revision > 0
+          && d.payload is string && d.payload.size() <= 900000
+          && d.updatedAt == request.time;
+      }
     }
-    match /users/{uid}/days/{day} {
+    match /users/{uid}/budgetHistory/{day} {
       allow read: if owner(uid);
-      allow create, update: if owner(uid) && day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && validBudget();
+      allow create, update: if owner(uid)
+        && day.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.keys().hasAll(['payload'])
+        && request.resource.data.keys().hasOnly(['payload'])
+        && request.resource.data.payload is string
+        && request.resource.data.payload.size() <= 900000;
     }
-    match /users/{uid}/entries/{id} {
-      allow read: if owner(uid);
-      allow create: if owner(uid) && validEntry() && request.resource.data.version == 1;
-      allow update: if owner(uid) && validEntry()
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.version == resource.data.version + 1;
-    }
+    // Other paths (including the previous app schema) are denied by default.
   }
 }

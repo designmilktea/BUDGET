@@ -1,40 +1,9 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#f5f5f2"><meta name="description" content="See what remains today. Consider purchases, choose what to buy, and keep your daily spending up to date.">
-  <title>Daily budget</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%232d5b47'/%3E%3Cpath d='M18 33l9 9 20-22' fill='none' stroke='white' stroke-width='6'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./src/style.css">
-</head>
-<body>
-  <main class="wallet">
-    <header class="balance-panel">
-      <div class="eyebrow-row"><h1>Projected remaining today</h1><button id="budget-button" class="quiet" disabled>Budget <span id="budget-value">—</span><span aria-hidden="true"> ↗</span></button></div>
-      <div id="projected" class="balance" aria-live="polite">—</div>
-      <div class="balance-detail"><span>Actual balance <strong id="actual">—</strong></span><span class="divider" aria-hidden="true"></span><span>Selected <strong id="selected-total">—</strong></span></div>
-    </header>
-    <section id="sign-in-panel" class="sign-in-panel" hidden>
-      <p>Keep your budget with you.</p><button id="sign-in" class="google-button"><span class="google-g" aria-hidden="true">G</span>Continue with Google</button>
-    </section>
-    <div id="status" class="status" role="status">Connecting…</div>
-    <section class="cart-section" aria-labelledby="cart-heading">
-      <div class="section-heading"><h2 id="cart-heading">Considering <span id="cart-count" class="count">0</span></h2><span id="selection-count" class="muted">0 selected</span></div>
-      <div id="cart" class="items"></div>
-      <div class="entry-box">
-        <div class="tabs" role="tablist" aria-label="Entry type"><button id="cart-tab" role="tab" aria-selected="true" aria-controls="entry-form">Add to cart</button><button id="purchase-tab" role="tab" aria-selected="false" aria-controls="entry-form">Record purchase</button></div>
-        <form id="entry-form" aria-labelledby="cart-tab">
-          <label class="sr-only" for="item-name">Item name (optional)</label><input id="item-name" name="name" placeholder="Item name (optional)" maxlength="100" autocomplete="off" disabled>
-          <div class="amount-entry"><span aria-hidden="true">$</span><label class="sr-only" for="item-amount">Amount ($)</label><input id="item-amount" name="amount" inputmode="decimal" placeholder="0.00" autocomplete="off" required disabled><button id="add-button" type="submit" aria-label="Add to cart" disabled><span aria-hidden="true">+</span></button></div>
-        </form>
-      </div>
-      <button id="checkout" class="checkout" disabled><span>Checkout selected</span><span id="checkout-total">$0.00 <span aria-hidden="true">↗</span></span></button>
-    </section>
-    <section class="spent-section" aria-label="Spent today"><details id="spent-details"><summary><span class="spent-label">Spent today <span id="purchase-count" class="count">0</span></span><span class="spent-right"><strong id="spent-total">—</strong><span class="chevron" aria-hidden="true">⌄</span></span></summary><div id="purchases" class="items"></div></details></section>
-    <footer id="account" hidden><span id="account-name"></span><button id="sign-out" class="quiet">Sign out</button></footer>
-    <div id="toast" class="toast" role="status" hidden><span id="toast-text"></span><button id="undo">Undo</button><button id="dismiss-toast" aria-label="Dismiss notification">×</button></div>
-  </main>
-  <dialog id="budget-dialog"><form id="budget-form"><div class="dialog-heading"><h2>Daily budget</h2><button id="close-budget" type="button" class="icon-button" aria-label="Close">×</button></div><label for="budget-input">Amount ($)</label><input id="budget-input" inputmode="decimal" required autocomplete="off"><p class="muted">Applies today and becomes your daily budget going forward.</p><button class="checkout" type="submit">Save budget</button></form></dialog>
-  <noscript>Please enable JavaScript to use your budget.</noscript>
-  <script type="module" src="./src/app.js"></script>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#101113"><title>Daily Budget</title><link rel="stylesheet" href="./src/style.css"></head><body>
+<div class="app"><header class="top"><div class="topline"><span>PROJECTED REMAINING TODAY</span><div class="headeractions"><button class="gear" id="destinationbtn" aria-label="Entry destination: Add to cart. Switch to Spent Today" title="Add to cart · Switch to Spent Today"></button><button class="gear" id="settingsbtn" aria-label="Settings">⚙</button></div></div><div id="projected" class="big"></div><div class="warning" id="warning" hidden></div></header>
+<div id="cloudnotice" class="storagewarning" role="status" hidden></div><div id="storagewarning" class="storagewarning" role="alert" hidden></div><main class="middle" id="middle"><div class="listhead"><strong id="listtitle"></strong><span id="listtotal"></span></div><div id="cart" class="cart"></div><div id="purchases" class="purchases" hidden></div><button class="checkout" id="checkout"></button><div class="feedback" id="feedback" role="status"></div></main>
+<section class="calculator" aria-label="Calculator"><div class="screen"><div class="expression" id="expression"></div><div class="number" id="number" aria-live="polite">0</div></div><div class="keypad" id="quickpad"></div><div class="keypad" id="fullpad" hidden></div><button id="fullsave" class="fullsave" hidden></button></section></div>
+<dialog id="settingsdialog" aria-labelledby="settingstitle"><div class="settingshead"><h2 id="settingstitle">Settings</h2><button class="close" id="closesettings" aria-label="Close settings">×</button></div><div class="fieldlabel">Account</div><div id="accountname" class="accountname">Not signed in</div><button id="googlelogin" class="accountbutton">Sign in with Google</button><button id="googlelogout" class="accountbutton" hidden>Sign out</button><div id="cloudstatus" class="cloudstatus" role="status">Saved on this browser</div><button id="cloudretry" class="accountbutton" hidden>Retry cloud sync</button><div class="fieldlabel">Calculator type</div><div class="selector" id="types"><button data-type="quick">Quick entry</button><button data-type="full">Full calculator</button></div><label class="fieldlabel" for="budgetinput" style="display:block">Daily budget (JPY)</label><div class="budgetedit"><input id="budgetinput" type="number" min="0" step="1" inputmode="numeric"><button id="savebudget">Save</button></div><div id="budgeterror" class="budgeterror" role="alert"></div><button id="previousdays" class="previousbutton">Previous days <span aria-hidden="true" style="float:right">›</span></button></dialog>
+<dialog id="deletedialog" aria-labelledby="deletetitle" aria-describedby="deletedescription"><h2 id="deletetitle">Delete purchase?</h2><p id="deletedescription"></p><div class="modalbuttons"><button id="canceldelete" autofocus>Cancel</button><button class="danger" id="confirmdelete">Delete purchase</button></div></dialog>
+<dialog id="historydialog" aria-labelledby="historytitle"><div class="settingshead"><h2 id="historytitle">Previous days</h2><button class="close" id="closehistory" aria-label="Close previous days">×</button></div><label for="historydate" class="fieldlabel" id="historydatelabel">Date</label><select id="historydate" class="historydate"></select><div id="historycontent"></div><div class="modalbuttons"><button id="backtoday">Back to today</button></div></dialog>
+<script src="./src/app.js"></script><script type="module" src="./src/account.js" onerror="document.getElementById('cloudstatus').textContent='Google sign-in is unavailable. Data remains saved on this browser.'"></script></body></html>
