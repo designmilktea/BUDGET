@@ -43,3 +43,21 @@ Sign-in state persists in the browser. Signing out returns to the separate guest
 ## Verification
 
 Tests cover budget arithmetic, same-day reopening, midnight rollover, historical budgets, grouped checkout, cancellation/deletion, account isolation, queued cloud writes, and stale-revision protection. Firebase end-to-end verification also requires the project's live Google sign-in provider, authorized domain, and published Firestore rules.
+
+## Shared budgets and notifications
+
+Settings → Share budget creates a separate shared budget without copying personal purchases or history. The owner invites a specific Google email as an Editor. Invitations appear in the invited account's in-app invitation list. The owner can copy a sign-in link to share directly; the app does not send email automatically. Invitations expire after 13 days and are valid only for the matching verified email. Editors may leave, and owners may remove editors. The owner cannot remove their own membership. Removed members lose access to both current and historical shared records; their existing purchases stay in the budget.
+
+Shared state lives under `budgets/{id}`, with `members`, `days`, and `events` subcollections. Per-user scope references live at `users/{uid}/sharedBudgets/{id}`. Transactions serialize shared financial changes and reject stale per-record versions. A checkout creates one purchase group and cannot purchase the same cart entries twice. Shared financial changes require an internet connection; private browser saving retains its existing behavior. Shared budgets use Asia/Tokyo for day boundaries.
+
+The header order is destination switch → notification bell → Settings. Notifications name the actor, remain available for today under the bell, and disappear from the floating overlay after four seconds. Turning off floating notifications retains the bell history. Logs clear from the interface each day; no previous-day notification screen is provided. Contributor colors appear on selected cart items; the name-to-color key appears only in Share budget. Name conflicts retain the draft and a Review action even after the floating alert expires.
+
+### Firestore access tests
+
+The normal `npm test` suite runs without external services. For isolated rules checks, install Firebase's official development tools locally (`firebase-tools`, `firebase`, `@firebase/rules-unit-testing`), use Java 21+, then run:
+
+```
+firebase emulators:exec --only firestore --project demo-budget-rules "node tests/firestore.emulator.mjs"
+```
+
+These checks use a demo project and do not read or change production records. They test owner-only personal data, invitation acceptance, wrong/unverified email rejection, expired/cancelled invitation rejection, role restrictions, immutable historical records, and access revocation. Publish the checked `firestore.rules` before using shared budgets in production.

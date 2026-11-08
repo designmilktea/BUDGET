@@ -39,3 +39,5 @@ export function remoteFor(uid) {
     }
   };
 }
+
+export {db,auth};
