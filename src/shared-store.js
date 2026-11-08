@@ -15,19 +15,22 @@ export async function createBudget(user,amount){
 export function watchBudget(id,update,fail){return onSnapshot(rootRef(id),snap=>{if(snap.exists())update({...snap.data(),id,data:JSON.parse(snap.data().payload)});else fail(new Error('This budget no longer exists.'))},fail)}
 export function watchMembers(id,update,fail){return onSnapshot(collection(db,'budgets',id,'members'),snap=>update(snap.docs.map(d=>({uid:d.id,...d.data()}))),fail)}
 export function watchMember(id,uid,update,fail){return onSnapshot(memberRef(id,uid),snap=>update(snap.exists()?snap.data():null),fail)}
-export function watchEvents(id,day,update,fail){return onSnapshot(query(collection(db,'budgets',id,'events'),where('day','==',day)),{includeMetadataChanges:true},snap=>update(snap.docs.filter(d=>!d.metadata.hasPendingWrites).map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.createdAt?.toMillis()||0)-(b.createdAt?.toMillis()||0))),fail)}
+export function watchEvents(id,day,update,fail){return onSnapshot(query(collection(db,'budgets',id,'events'),where('day','==',day)),{includeMetadataChanges:true},snap=>update(snap.docChanges({includeMetadataChanges:true}).filter(change=>change.type!=='removed'&&!change.doc.metadata.hasPendingWrites).map(change=>change.doc).map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.createdAt?.toMillis()||0)-(b.createdAt?.toMillis()||0))),fail)}
 export function watchSentInvites(id,uid,update,fail){return onSnapshot(query(collection(db,'budgetInvites'),where('budgetId','==',id),where('ownerUid','==',uid),where('status','==','pending')),snap=>update(snap.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.expiresAt.toMillis()>Date.now())),fail)}
 export async function command(id,member,input){
  if(!navigator.onLine)throw new Error('Connect to the internet to change this shared budget.');
- const eventRef=doc(collection(db,'budgets',id,'events'));
+ const eventRef=input.operationId?doc(db,'budgets',id,'events',input.operationId):doc(collection(db,'budgets',id,'events'));
  return runTransaction(db,async tx=>{
-  const latest=await tx.get(rootRef(id));if(!latest.exists())throw new Error('Budget unavailable.');
-  const data=JSON.parse(latest.data().payload);let result;try{result=applyCommand(data,input,member,tokyoDay())}catch(error){error.current=targetFor(data,input)||null;throw error}
-  if(input.type==='day'&&!result.archive)return result;
+  const [existing,latest]=await Promise.all([input.operationId?tx.get(eventRef):null,tx.get(rootRef(id))]);if(!latest.exists())throw new Error('Budget unavailable.');
+  const data=JSON.parse(latest.data().payload);
+  if(existing?.exists())return {data,revision:latest.data().revision};
+  if(input.day&&input.day!==tokyoDay())throw new Error('This change was entered on a previous day and was not added to today.');
+  let result;try{result=applyCommand(data,input,member,tokyoDay())}catch(error){error.current=targetFor(data,input)||null;throw error}
+  if(input.type==='day'&&!result.archive)return {...result,revision:latest.data().revision};
   const payload=JSON.stringify(result.data);if(new TextEncoder().encode(payload).length>900000)throw new Error('This day has too many records to save.');
   tx.update(rootRef(id),{payload,revision:latest.data().revision+1,updatedAt:serverTimestamp()});
   if(result.archive)tx.set(doc(db,'budgets',id,'days',result.archive.day),{payload:JSON.stringify(result.archive.state)});
-  if(result.event)tx.set(eventRef,{...result.event,createdAt:serverTimestamp()});return result;
+  if(result.event)tx.set(eventRef,{...result.event,createdAt:serverTimestamp()});return {...result,revision:latest.data().revision+1};
  });
 }
 export async function historyFor(id){const result=await getDocsFromServer(collection(db,'budgets',id,'days'));return Object.fromEntries(result.docs.map(d=>[d.id,JSON.parse(d.data().payload)]))}

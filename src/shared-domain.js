@@ -1,5 +1,6 @@
+const dayFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'});
 export function tokyoDay(date=new Date()) {
-  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
+  const parts=dayFormatter.formatToParts(date);
   return ['year','month','day'].map(k=>parts.find(x=>x.type===k).value).join('-');
 }
 export function conflict(message,code='budget/conflict'){const e=new Error(message);e.code=code;return e}
@@ -24,8 +25,11 @@ export function applyCommand(input,command,actor,day=tokyoDay()) {
     case 'day':break;
     case 'add':{
       if(!Number.isSafeInteger(command.yen)||command.yen<=0||command.yen>=1e9)throw new Error('Enter a positive whole-yen amount.');
-      const item={id:s.nextId++,name:'Item '+s.nextItem++,yen:command.yen,selected:true,author,version:1};
-      if(command.destination==='spent'){s.purchases.push({id:s.nextId++,name:'Purchase '+s.nextPurchase++,items:[item],author,version:1});message='recorded '+item.name+' · ¥'+command.yen.toLocaleString('ja-JP')}
+      const itemId=command.itemId||s.nextId;
+      if(!Number.isSafeInteger(itemId)||itemId<=0||s.cart.some(x=>x.id===itemId)||s.purchases.some(p=>p.id===itemId||p.items.some(x=>x.id===itemId)))throw new Error('This item ID is already in use.');
+      const item={id:itemId,name:'Item '+s.nextItem++,yen:command.yen,selected:true,author,version:1};
+      s.nextId++;
+      if(command.destination==='spent'){s.purchases.push({id:command.purchaseId||s.nextId,name:'Purchase '+s.nextPurchase++,items:[item],author,version:1});s.nextId++;message='recorded '+item.name+' · ¥'+command.yen.toLocaleString('ja-JP')}
       else{s.cart.push(item);message='added '+item.name+' · ¥'+command.yen.toLocaleString('ja-JP')}
       break;
     }
@@ -36,7 +40,9 @@ export function applyCommand(input,command,actor,day=tokyoDay()) {
       const chosen=command.items.map(x=>check(currentCart(x.id),x.version));
       if(chosen.some(x=>!x.selected))throw conflict('The selected items changed. Review the cart before checkout.','budget/checkout-stale');
       const ids=new Set(chosen.map(x=>x.id));if(ids.size!==chosen.length)throw new Error('Duplicate checkout item.');
-      const purchase={id:s.nextId++,name:'Purchase '+s.nextPurchase++,items:chosen.map(x=>({...x,selected:false})),author,version:1};
+      const purchaseId=command.purchaseId||s.nextId++;
+      if(!Number.isSafeInteger(purchaseId)||purchaseId<=0||s.purchases.some(p=>p.id===purchaseId)||s.cart.some(x=>x.id===purchaseId))throw new Error('This purchase ID is already in use.');
+      const purchase={id:purchaseId,name:'Purchase '+s.nextPurchase++,items:chosen.map(x=>({...x,selected:false})),author,version:1};
       s.purchases.push(purchase);s.cart=s.cart.filter(x=>!ids.has(x.id));message='checked out '+chosen.length+' '+(chosen.length===1?'item':'items')+' · ¥'+chosen.reduce((n,x)=>n+x.yen,0).toLocaleString('ja-JP');break;
     }
     case 'rename':{

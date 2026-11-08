@@ -11,7 +11,7 @@ function boot(storage=disk){const nodes=new Map(),events={},timers=new Map();let
  const context=vm.createContext({console,Intl,Set,Date:TestDate,localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v)},setTimeout(fn,ms){timers.set(++tid,{fn,ms});return tid},clearTimeout(id){timers.delete(id)},window:{addEventListener(k,fn){events['window:'+k]=fn}},document:{visibilityState:'visible',getElementById:node,querySelectorAll(){return []},querySelector(){return null},createElement(){return node('edit'+(++tid))},addEventListener(k,fn,capture){events['document:'+k+':'+!!capture]=fn}}});
  vm.runInContext(source,context);return {run:s=>vm.runInContext(s,context),node,context,events,timers};}
 const snapshot=b=>JSON.parse(b.run('JSON.stringify({state,entry,tokens,fresh,solved,calcError,ui,expanded:[...expanded]})'));
-let b=boot();assert.equal(b.node('projected').textContent,'¥1,000');assert.equal(b.run('state.purchases.length'),0);assert.equal(b.run('state.cart.length'),0);assert.equal(disk.size,1);
+let b=boot();assert.equal(b.node('projected').textContent,'¥1,000');assert.equal(b.run('state.purchases.length'),0);assert.equal(b.run('state.cart.length'),0);assert.equal(disk.size,2);
 b.node('budgetinput').value='1500';b.node('savebudget').onclick();assert.equal(b.run('defaultBudget'),1500);assert.equal(b.run('state.budget'),1500);
 b.run("key('2');key('0');key('0');add();key('5');key('0');add()");assert.equal(b.node('projected').textContent,'¥1,250');b.node('checkout').onclick();assert.equal(b.run('state.purchases.length'),1);assert.equal(b.run('state.purchases[0].items.length'),2);assert.equal(b.node('projected').textContent,'¥1,250');
 b.node('destinationbtn').onclick();assert.equal(b.run('state.mode'),'spent');
@@ -42,9 +42,9 @@ askDelete();b.node('confirmdelete').onclick();b=boot();assert.equal(b.run('state
 b.node('destinationbtn').onclick();b.run("clearCalc();key('1');key('0');add()");b.node('cart').onchange({target:{dataset:{select:String(b.run('state.cart.at(-1).id'))},checked:false}});b=boot();assert.equal(b.run('state.cart.at(-1).selected'),false);
 const cartId=b.run('state.cart.at(-1).id');b.node('cart').onclick({target:{closest(){return {dataset:{remove:String(cartId)}}}}});b=boot();assert.ok(!b.run('state.cart.some(x=>x.id==='+cartId+')'));
 // Storage failures are visible rather than silently claiming success.
-const broken={get(){throw new Error('disabled')},set(){throw new Error('disabled')}};const bad=boot(broken);assert.equal(bad.node('storagewarning').hidden,false);assert.equal(bad.run('storageReady'),false);
+const broken={get(){throw new Error('disabled')},set(){throw new Error('disabled')}};const bad=boot(broken);assert.ok(bad.context.window.BudgetPendingNotices.length>0);assert.equal(bad.run('storageReady'),false);
 // Corrupt saved data is not overwritten.
-const corrupt=new Map([['daily-budget-v1','broken']]);const corruptApp=boot(corrupt);assert.equal(corrupt.get('daily-budget-v1'),'broken');assert.equal(corruptApp.node('storagewarning').hidden,false);
+const corrupt=new Map([['daily-budget-v1','broken']]);const corruptApp=boot(corrupt);assert.equal(corrupt.get('daily-budget-v1'),'broken');assert.ok(corruptApp.context.window.BudgetPendingNotices.length>0);
 console.log('Passed: same-day reload, calculator draft/settings/expansion/scroll restoration, saved renames, grouped checkout, local midnight rollover, multi-day reopen, carried deselected cart, updated future budgets, immutable historical budgets, read-only history, JPY validation, storage failure handling.');
 
 });

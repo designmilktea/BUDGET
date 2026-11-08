@@ -1,6 +1,6 @@
 import {SyncSession} from './sync.js';
 const $=id=>document.getElementById(id),app=window.BudgetApp;
-let services,session=null,generation=0,currentUser=null;
+let lastNotice='',services,session=null,generation=0,currentUser=null;
 const accountListeners=new Set();let accountPhase='loading';
 function emitAccount(phase){accountPhase=phase;accountListeners.forEach(fn=>fn({user:currentUser,phase}))}
 export function observeAccount(fn){accountListeners.add(fn);fn({user:currentUser,phase:accountPhase});return()=>accountListeners.delete(fn)}
@@ -15,19 +15,14 @@ function status(kind,error){
   $('cloudstatus').classList.toggle('error',['conflict','error','storage-error'].includes(kind));
   $('cloudretry').hidden=!['error','conflict'].includes(kind);
   $('cloudretry').disabled=kind==='conflict';
-  // Do not hide cloud failures inside Settings while users keep recording purchases.
-  $('cloudnotice').hidden=!['conflict','error','storage-error'].includes(kind);
-  $('cloudnotice').textContent=$('cloudstatus').textContent;
-  if(error?.code==='permission-denied'){
-    $('cloudstatus').textContent='Firebase has not granted this app access. Publish the repository’s firestore.rules for tokyo-budget.';
-    $('cloudnotice').textContent=$('cloudstatus').textContent;
-  }
+  if(error?.code==='permission-denied')$('cloudstatus').textContent='Firebase has not granted this app access. Publish the repository’s firestore.rules for tokyo-budget.';
+  if(['conflict','error','storage-error'].includes(kind)){const message=$('cloudstatus').textContent;if(message!==lastNotice)window.BudgetNotifications?.push({message});lastNotice=message}else lastNotice='';
 }
 async function connect(user){
   const token=++generation;session?.close();session=null;app.connect(null);app.setSharedAdapter(null);currentUser=user;emitAccount('loading');
   $('googlelogin').hidden=!!user;$('googlelogout').hidden=!user;
   $('accountname').textContent=user?(user.email||user.displayName||'Google account'):'Not signed in';
-  $('cloudretry').hidden=true;$('cloudnotice').hidden=true;
+  $('cloudretry').hidden=true;
   if(!user){app.switchAccount('daily-budget-v1');status('Saved on this browser');emitAccount('ready');return}
   const guest=app.snapshot(),key=cacheKey(user.uid);
   let cache=null;try{cache=JSON.parse(localStorage.getItem(key)||'null')}catch{}
