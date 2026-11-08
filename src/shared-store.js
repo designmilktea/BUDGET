@@ -3,7 +3,7 @@ import {collection,doc,onSnapshot,query,where,getDocFromServer,getDocsFromServer
 import {applyCommand,blankShared,tokyoDay,targetFor} from './shared-domain.js';
 const rootRef=id=>doc(db,'budgets',id),memberRef=(id,uid)=>doc(db,'budgets',id,'members',uid),indexRef=(uid,id)=>doc(db,'users',uid,'sharedBudgets',id),inviteRef=id=>doc(db,'budgetInvites',id);
 export const identity=user=>({uid:user.uid,email:user.email?.toLowerCase()||'',name:user.displayName||user.email||'Google user'});
-export function watchScopes(user,callback,fail){return onSnapshot(collection(db,'users',user.uid,'sharedBudgets'),snapshot=>callback(snapshot.docs.map(d=>({id:d.id,...d.data()}))),fail)}
+export function watchScopes(user,callback,fail){return onSnapshot(collection(db,'users',user.uid,'sharedBudgets'),snapshot=>callback(snapshot.docs.map(d=>({id:d.id,...d.data()})),{fromCache:snapshot.metadata.fromCache}),fail)}
 export function watchInvitations(user,callback,fail){return onSnapshot(query(collection(db,'budgetInvites'),where('email','==',user.email.toLowerCase()),where('status','==','pending')),snapshot=>callback(snapshot.docs.map(d=>({id:d.id,...d.data()})).filter(x=>x.expiresAt.toMillis()>Date.now())),fail)}
 export async function createBudget(user,amount){
  const id=doc(collection(db,'budgets')).id,actor=identity(user),batch=writeBatch(db);

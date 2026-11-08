@@ -79,7 +79,7 @@ observeAccount(async({user:nextUser,phase})=>{
  if(phase==='loading'){closeGroup();accountStops.forEach(stop=>stop());accountStops=[];scope='personal';user=nextUser;scopes=[];invitations=[];lastInvite='';inviteEmail='';setContext();updateScopes();return}
  user=nextUser;setContext();if(!user)return;
  let restored=false;const uid=user.uid;
- accountStops.push(store.watchScopes(user,list=>{if(user?.uid!==uid)return;scopes=list;updateScopes();if(!restored){restored=true;const selected=localStorage.getItem(selectedKey());if(selected&&selected!=='personal'&&list.some(b=>b.id===selected))openBudget(selected).catch(fail)}if($('sharedialog').open)renderSharing()},fail));
+ accountStops.push(store.watchScopes(user,(list,metadata)=>{if(user?.uid!==uid)return;scopes=list;updateScopes();const selected=localStorage.getItem(selectedKey());if(!restored&&(!metadata.fromCache||list.some(b=>b.id===selected))){restored=true;if(selected&&selected!=='personal'&&list.some(b=>b.id===selected))openBudget(selected).catch(fail)}if($('sharedialog').open)renderSharing()},fail));
  accountStops.push(store.watchInvitations(user,list=>{if(user?.uid!==uid)return;invitations=list;if($('sharedialog').open)renderSharing();const requested=new URLSearchParams(location.search).get('invite');if(requested&&list.some(i=>i.id===requested)){renderSharing();$('sharedialog').showModal()}},fail));
 });
 setContext();window.addEventListener('focus',checkDay);window.addEventListener('online',checkDay);
