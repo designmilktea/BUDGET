@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {applyCommand,blankShared,tokyoDay,targetFor} from '../src/shared-domain.js';
 const day='2026-11-08',alex={uid:'alex',name:'Alex',color:36},mei={uid:'mei',name:'Mei',color:174};
+test('shared budget names sync, survive rollover, and reject stale renames',()=>{
+ const initial=blankShared(2000,day),command={type:'budget',yen:2500,expectedBudget:2000,name:'Tokyo home',expectedName:'Shared budget'};
+ const renamed=applyCommand(initial,command,mei,day).data;assert.equal(renamed.budgetName,'Tokyo home');assert.equal(renamed.defaultBudget,2500);
+ assert.equal(applyCommand(renamed,{type:'day'},mei,'2026-11-09').data.budgetName,'Tokyo home');
+ assert.throws(()=>applyCommand(renamed,{...command,expectedBudget:2500,name:'Old draft'},alex,day),/name changed/);
+ assert.throws(()=>applyCommand(renamed,{...command,expectedBudget:2500,expectedName:'Tokyo home',name:'x'.repeat(61)},alex,day),/1–60/);
+});
 function add(data,actor=alex,yen=300){return applyCommand(data,{type:'add',yen,destination:'cart'},actor,day).data}
 test('Tokyo midnight uses one shared date regardless of local device timezone',()=>{assert.equal(tokyoDay(new Date('2026-11-08T14:59:59Z')),'2026-11-08');assert.equal(tokyoDay(new Date('2026-11-08T15:00:00Z')),'2026-11-09')});
 test('different contributors keep stable item ownership and colors',()=>{let data=add(blankShared(2000,day));data=add(data,mei,200);assert.equal(data.state.cart[0].author.uid,'alex');assert.equal(data.state.cart[1].author.color,174);assert.equal(data.state.cart.every(x=>x.selected),true)});

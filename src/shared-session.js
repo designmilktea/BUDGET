@@ -3,11 +3,15 @@ import {applyCommand,tokyoDay} from './shared-domain.js';
 // Keep the interactive view ahead of network latency. Each command has stable
 // record/event IDs so replaying an interrupted request cannot duplicate a purchase.
 export class SharedSession {
- constructor({actor,commit,update,fail,storage,key,day=tokyoDay,id=()=>crypto.randomUUID(),recordId=()=>{const words=new Uint32Array(2);crypto.getRandomValues(words);return 1+words[0]*1048576+(words[1]>>>12)}}){
-  Object.assign(this,{actor,commit,update,fail,storage,key,day,id,recordId});
+ constructor({actor,commit,update,fail,storage,key,day=tokyoDay,online=()=>typeof navigator==='undefined'||navigator.onLine!==false,onStatus=()=>{},id=()=>crypto.randomUUID(),recordId=()=>{const words=new Uint32Array(2);crypto.getRandomValues(words);return 1+words[0]*1048576+(words[1]>>>12)}}){
+  Object.assign(this,{actor,commit,update,fail,storage,key,day,id,recordId,online,onStatus});
   this.base=null;this.revision=0;this.running=false;this.closed=false;this.pending=[];
   try{this.pending=JSON.parse(storage.getItem(key)||'[]').map(command=>({command}))}catch{}
  }
+ restore(){try{const cached=JSON.parse(this.storage.getItem(this.key+':confirmed')||'null');if(cached){this.base=cached.data;this.revision=cached.revision;this.project();this.status()}}catch{}}
+ status(){this.onStatus(!this.online()?'Offline · '+this.pending.length+' changes waiting to sync':this.pending.length?'Syncing '+this.pending.length+' changes…':'Saved to Firebase')}
+ cacheBase(){try{this.storage.setItem(this.key+':confirmed',JSON.stringify({data:this.base,revision:this.revision}))}catch{}}
+ acceptedOffline(){for(const entry of this.pending){entry.resolve?.({queued:true});delete entry.resolve;delete entry.reject}this.status()}
  persist(){this.storage.setItem(this.key,JSON.stringify(this.pending.map(x=>x.command)))}
  persistResult(command){try{this.persist()}catch{this.fail(new Error('The latest save could not be cached on this browser. Keep this page open.'),command)}}
  receive(data,revision){
@@ -15,14 +19,15 @@ export class SharedSession {
   // A listener can see our transaction before its promise resolves. Do not
   // project the still-pending command a second time over that server result.
   if(this.running){if(!this.buffer||revision>=this.buffer.revision)this.buffer={data,revision};return}
-  this.base=data;this.revision=revision;this.project();this.flush();
+  this.base=data;this.revision=revision;this.cacheBase();this.project();this.flush();
  }
  acceptBuffer(){if(this.buffer?.revision>=this.revision){this.base=this.buffer.data;this.revision=this.buffer.revision}this.buffer=null}
  project(){
   if(this.closed||!this.base)return;
   let view=this.base;
   for(const entry of this.pending){try{view=applyCommand(view,entry.command,this.actor,entry.command.day).data}catch{/* The transaction reports authoritative conflicts. */}}
-  const encoded=JSON.stringify(view);if(encoded!==this.lastView){this.lastView=encoded;this.update(view)}
+  if(view.currentDate<this.day())view=applyCommand(view,{type:'day'},this.actor,this.day()).data;
+  const encoded=JSON.stringify(view);if(encoded!==this.lastView){this.lastView=encoded;this.view=view;this.update(view)}
  }
  perform(input){
   if(this.closed||!this.base)return Promise.reject(new Error('The shared budget is still loading.'));
@@ -30,7 +35,7 @@ export class SharedSession {
   if(input.type==='add'){command.itemId=this.recordId();if(input.destination==='spent')command.purchaseId=this.recordId()}
   if(input.type==='checkout')command.purchaseId=this.recordId();
   // Validate against the current projected view before accepting input.
-  let view=this.base;for(const entry of this.pending)view=applyCommand(view,entry.command,this.actor,entry.command.day).data;
+  let view=this.base;for(const entry of this.pending){try{view=applyCommand(view,entry.command,this.actor,entry.command.day).data}catch{}}
   applyCommand(view,command,this.actor,command.day);
   return new Promise((resolve,reject)=>{
    const entry={command,resolve,reject};this.pending.push(entry);
@@ -39,8 +44,8 @@ export class SharedSession {
   });
  }
  async flush(){
-  if(this.closed||this.running||!this.base||!this.pending.length)return;
-  this.running=true;
+  clearTimeout(this.retryTimer);if(this.closed||this.running||!this.base)return;if(!this.online()){this.acceptedOffline();return}if(!this.pending.length){this.status();return}
+  this.running=true;this.status();
   while(!this.closed&&this.pending.length){
    const entry=this.pending[0];
    try{
@@ -48,14 +53,15 @@ export class SharedSession {
     if(this.closed)break;
     this.pending.shift();
     if(result.revision>=this.revision){this.base=result.data;this.revision=result.revision}
-    this.acceptBuffer();this.persistResult(entry.command);this.project();entry.resolve?.();
+    this.acceptBuffer();this.cacheBase();this.persistResult(entry.command);this.project();entry.resolve?.();this.status();
    }catch(error){
     if(this.closed)break;
-    this.pending.shift();this.acceptBuffer();this.persistResult(entry.command);this.project();
+    if(!this.online()||['budget/offline','unavailable','deadline-exceeded','network-request-failed','aborted','cancelled'].includes(error.code)){this.acceptedOffline();this.running=false;if(this.online()){this.retryTimer=setTimeout(()=>this.flush(),3000);this.retryTimer.unref?.()}return}
+    this.pending.shift();this.acceptBuffer();this.cacheBase();this.persistResult(entry.command);this.project();
     if(entry.reject)entry.reject(error);else this.fail(error,entry.command);
    }
   }
-  this.running=false;
+  this.running=false;this.status();
  }
- close(){this.closed=true}
+ close(){this.closed=true;clearTimeout(this.retryTimer)}
 }

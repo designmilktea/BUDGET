@@ -5,7 +5,7 @@ export function tokyoDay(date=new Date()) {
 }
 export function conflict(message,code='budget/conflict'){const e=new Error(message);e.code=code;return e}
 export function blankShared(budget=1000,day=tokyoDay()) {
-  return {currentDate:day,defaultBudget:budget,state:{budget,cart:[],purchases:[],nextId:1,nextItem:1,nextPurchase:1}};
+  return {currentDate:day,defaultBudget:budget,budgetName:'Shared budget',state:{budget,cart:[],purchases:[],nextId:1,nextItem:1,nextPurchase:1}};
 }
 export function versionOf(record){return record?.version||1}
 export function targetFor(data,command){
@@ -52,7 +52,7 @@ export function applyCommand(input,command,actor,day=tokyoDay()) {
       const before=target.name;target.name=name;target.lastEditedBy=author;container.lastEditedBy=author;container.version=versionOf(container)+1;message='renamed '+before+' to '+name;break;
     }
     case 'deletePurchase':{const purchase=check(s.purchases.find(x=>x.id===command.id),command.expectedVersion);s.purchases=s.purchases.filter(x=>x.id!==purchase.id);message='deleted '+purchase.name;break}
-    case 'budget':{if(!Number.isSafeInteger(command.yen)||command.yen<0||command.yen>=1e8)throw new Error('Enter a daily budget in whole yen.');if(command.expectedBudget!==s.budget)throw conflict('The daily budget changed. Review the new amount before saving.');s.budget=command.yen;data.defaultBudget=command.yen;message='changed the daily budget to ¥'+command.yen.toLocaleString('ja-JP');break}
+    case 'budget':{if(!Number.isSafeInteger(command.yen)||command.yen<0||command.yen>=1e8)throw new Error('Enter a daily budget in whole yen.');if(command.expectedBudget!==s.budget)throw conflict('The daily budget changed. Review the new amount before saving.');const name=command.name?.trim();if(command.name!==undefined&&(!name||name.length>60))throw new Error('Use a budget name of 1–60 characters.');if(name&&command.expectedName!==(data.budgetName||'Shared budget'))throw conflict('The budget name changed. Review the latest name before saving.');const renamed=name&&name!==(data.budgetName||'Shared budget');s.budget=command.yen;data.defaultBudget=command.yen;if(name)data.budgetName=name;message=(renamed?'renamed the budget to '+name+' and ':'')+'changed the daily budget to ¥'+command.yen.toLocaleString('ja-JP');break}
     default:throw new Error('Unknown shared-budget action.');
   }
   return {data,archive,event:message?{kind,message,day,actorUid:actor.uid,actorName:actor.name}:null};

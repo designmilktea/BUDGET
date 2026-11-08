@@ -12,12 +12,12 @@ function boot(storage=disk){const nodes=new Map(),events={},timers=new Map();let
  vm.runInContext(source,context);return {run:s=>vm.runInContext(s,context),node,context,events,timers};}
 const snapshot=b=>JSON.parse(b.run('JSON.stringify({state,entry,tokens,fresh,solved,calcError,ui,expanded:[...expanded]})'));
 let b=boot();assert.equal(b.node('projected').textContent,'¥1,000');assert.equal(b.run('state.purchases.length'),0);assert.equal(b.run('state.cart.length'),0);assert.equal(disk.size,2);
-b.node('budgetinput').value='1500';b.node('savebudget').onclick();assert.equal(b.run('defaultBudget'),1500);assert.equal(b.run('state.budget'),1500);
+b.node('budgetname').value='My Tokyo budget';b.node('budgetinput').value='1500';b.node('savebudget').onclick();assert.equal(b.run('defaultBudget'),1500);assert.equal(b.run('state.budget'),1500);
 b.run("key('2');key('0');key('0');add();key('5');key('0');add()");assert.equal(b.node('projected').textContent,'¥1,250');b.node('checkout').onclick();assert.equal(b.run('state.purchases.length'),1);assert.equal(b.run('state.purchases[0].items.length'),2);assert.equal(b.node('projected').textContent,'¥1,250');
 b.node('destinationbtn').onclick();assert.equal(b.run('state.mode'),'spent');
 b.run("state.type='full';key('1');key('0');key('0');key('×');key('3');expanded.add(state.purchases[0].id);render()");
 b.node('cart').scrollLeft=70;b.node('cart').listeners.scroll();b.node('middle').scrollTop=130;b.node('middle').listeners.scroll();const expected=snapshot(b);
-b=boot();assert.deepEqual(snapshot(b),expected);assert.equal(b.node('cart').scrollLeft,70);assert.equal(b.node('middle').scrollTop,130);assert.equal(b.run('amount()'),300);
+b=boot();assert.equal(b.node('budgettitle').textContent,'My Tokyo budget');assert.deepEqual(snapshot(b),expected);assert.equal(b.node('cart').scrollLeft,70);assert.equal(b.node('middle').scrollTop,130);assert.equal(b.run('amount()'),300);
 // Rename purchases and constituent items persists, without changing spending.
 b.context.button={isConnected:true,dataset:{purchaseName:String(b.run('state.purchases[0].id'))},replaceWith(input){b.context.edit=input}};b.run('renamePurchase(button)');b.context.edit.value='Groceries';b.context.edit.onkeydown({key:'Enter',preventDefault(){}});
 b.context.button={isConnected:true,dataset:{purchase:String(b.run('state.purchases[0].id')),purchaseItem:'0'},replaceWith(input){b.context.edit=input}};b.run('renamePurchase(button)');b.context.edit.value='Lunch';b.context.edit.onblur();b=boot();assert.equal(b.run('state.purchases[0].name'),'Groceries');assert.equal(b.run('state.purchases[0].items[0].name'),'Lunch');
